@@ -6,6 +6,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\EquipmentStatus;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Equipment\StoreEquipmentRequest;
+use App\Http\Requests\Equipment\UpdateEquipmentRequest;
 use App\Http\Resources\EquipmentCollection;
 use App\Http\Resources\EquipmentResource;
 use App\Models\Equipment;
@@ -14,7 +16,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
 use Throwable;
 
 class EquipmentController extends Controller
@@ -57,17 +58,10 @@ class EquipmentController extends Controller
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreEquipmentRequest $request): JsonResponse
     {
         try {
-            $data = $request->validate([
-                'name' => ['required', 'string', 'max:100', Rule::unique('equipment', 'name')],
-                'category' => ['required', 'string', 'max:50'],
-                'description' => ['nullable', 'string', 'max:1000'],
-                'status' => ['nullable', Rule::enum(EquipmentStatus::class)],
-                'stock' => ['nullable', 'integer', 'min:0', 'max:100'],
-                'image' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:2048'],
-            ]);
+            $data = $request->validated();
 
             if (isset($data['image']) && $data['image'] instanceof UploadedFile) {
                 unset($data['image']);
@@ -119,23 +113,10 @@ class EquipmentController extends Controller
         }
     }
 
-    public function update(Request $request, Equipment $equipment): JsonResponse
+    public function update(UpdateEquipmentRequest $request, Equipment $equipment): JsonResponse
     {
         try {
-            $data = $request->validate([
-                'name' => [
-                    'sometimes',
-                    'nullable',
-                    'string',
-                    'max:100',
-                    Rule::unique('equipment', 'name')->ignore($equipment),
-                ],
-                'category' => ['sometimes', 'nullable', 'string', 'max:50'],
-                'description' => ['sometimes', 'nullable', 'string', 'max:1000'],
-                'status' => ['sometimes', 'nullable', Rule::enum(EquipmentStatus::class)],
-                'stock' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:100'],
-                'image' => ['sometimes', 'nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:2048'],
-            ]);
+            $data = $request->validated();
 
             if (isset($data['image']) && $data['image'] instanceof UploadedFile) {
                 unset($data['image']);
