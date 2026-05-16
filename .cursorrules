@@ -1,0 +1,642 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║           SMART-HUB MANAGEMENT SYSTEM — CURSOR RULES            ║
+# ║         Laravel 13 · MySQL · REST API · Sanctum Auth            ║
+# ╚══════════════════════════════════════════════════════════════════╝
+#
+# Crafted for a senior fullstack developer workflow.
+# Every suggestion, every line — intentional, clean, production-grade.
+
+# ─────────────────────────────────────────────────────────────────────
+# 0. PROJECT IDENTITY
+# ─────────────────────────────────────────────────────────────────────
+
+project:
+  name: Smart-Hub Management System
+  description: >
+    Platform manajemen peminjaman ruang kerja dan peralatan studio
+    untuk komunitas kreatif lokal. Melayani dua jenis pengguna:
+    Admin (dashboard web) dan Anggota (tablet via REST API).
+  stack:
+    backend: Laravel 13
+    database: MySQL 8+
+    auth: Laravel Sanctum (token-based)
+    version_control: Git (branching strategy: feature branches)
+    php: "^8.3"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1. ARCHITECTURE PHILOSOPHY
+# ─────────────────────────────────────────────────────────────────────
+
+architecture:
+  pattern: MVC (Model · View · Controller)
+  principles:
+    - SOLID — Single responsibility di setiap class
+    - DRY — Hindari duplikasi logika; gunakan Service/Trait jika perlu
+    - KISS — Jangan over-engineer; solusi sederhana lebih baik
+    - Thin Controller — Controller hanya routing logika, bukan bisnis
+    - Fat Model — Relasi, scope, accessor/mutator ada di Model
+  layers:
+    - Routes        → hanya definisi endpoint, tidak ada logika
+    - Controllers   → validasi input, panggil service/model, return response
+    - Models        → Eloquent ORM, relasi, scopes, casting
+    - Migrations    → schema database yang bersih dan terstruktur
+    - Seeders       → data dummy untuk development & testing
+    - Resources     → transformasi data API (JsonResource)
+    - Requests      → validasi form/API (FormRequest)
+    - Policies      → otorisasi berbasis role
+    - Middleware    → autentikasi, throttling, logging
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. FOLDER STRUCTURE CONVENTION
+# ─────────────────────────────────────────────────────────────────────
+
+structure:
+  app/:
+    Http/:
+      Controllers/:
+        Api/:          # Controller khusus REST API (tablet)
+        Web/:          # Controller untuk dashboard admin
+      Middleware/:     # Custom middleware
+      Requests/:       # FormRequest untuk validasi
+      Resources/:      # API Resource (JsonResource)
+    Models/:           # Eloquent Models
+    Services/:         # Business logic layer (opsional tapi disarankan)
+    Policies/:         # Authorization policies
+  database/:
+    migrations/:       # Semua schema table
+    seeders/:          # Data dummy
+    factories/:        # Model factories untuk testing
+  routes/:
+    api.php:           # Endpoint REST API (prefix /api)
+    web.php:           # Route dashboard admin
+  tests/:
+    Feature/:          # Integration / endpoint testing
+    Unit/:             # Unit testing per class
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3. DATABASE & MIGRATION RULES
+# ─────────────────────────────────────────────────────────────────────
+
+database:
+  engine: MySQL 8+
+  charset: utf8mb4
+  collation: utf8mb4_unicode_ci
+
+  tables:
+    users:
+      description: Admin dan anggota komunitas
+      columns:
+        - id (bigIncrements, PK)
+        - name (string)
+        - email (string, unique)
+        - password (hashed)
+        - role (enum: admin | member)
+        - email_verified_at (timestamp, nullable)
+        - timestamps
+
+    equipment:
+      description: Inventaris peralatan studio
+      columns:
+        - id (bigIncrements, PK)
+        - name (string)
+        - category (string)
+        - description (text, nullable)
+        - status (enum: available | borrowed | maintenance)
+        - stock (integer, default 1)
+        - image (string, nullable)
+        - timestamps
+        - softDeletes
+
+    bookings:
+      description: Jadwal peminjaman ruang/peralatan
+      columns:
+        - id (bigIncrements, PK)
+        - user_id (FK → users)
+        - equipment_id (FK → equipment)
+        - start_time (datetime)
+        - end_time (datetime)
+        - status (enum: pending | approved | rejected | returned)
+        - notes (text, nullable)
+        - checked_in_at (timestamp, nullable)
+        - checked_out_at (timestamp, nullable)
+        - timestamps
+        - softDeletes
+
+    personal_access_tokens:
+      description: Sanctum token table (auto via migrate)
+
+  migration_rules:
+    - Selalu gunakan bigIncrements untuk primary key
+    - Selalu tambahkan timestamps() di setiap tabel
+    - Gunakan softDeletes() untuk data yang tidak boleh dihapus permanen
+    - Foreign key wajib menggunakan constrained() dan cascadeOnDelete()
+    - Gunakan enum untuk kolom status agar data konsisten
+    - Indeks pada kolom yang sering di-query (status, user_id, equipment_id)
+
+  example_migration: |
+    Schema::create('bookings', function (Blueprint $table) {
+        $table->id();
+        $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+        $table->foreignId('equipment_id')->constrained()->cascadeOnDelete();
+        $table->dateTime('start_time');
+        $table->dateTime('end_time');
+        $table->enum('status', ['pending', 'approved', 'rejected', 'returned'])
+              ->default('pending');
+        $table->text('notes')->nullable();
+        $table->timestamp('checked_in_at')->nullable();
+        $table->timestamp('checked_out_at')->nullable();
+        $table->timestamps();
+        $table->softDeletes();
+        $table->index(['user_id', 'status']);
+        $table->index(['equipment_id', 'status']);
+    });
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 4. ELOQUENT MODEL RULES
+# ─────────────────────────────────────────────────────────────────────
+
+models:
+  conventions:
+    - Selalu definisikan $fillable (mass assignment protection)
+    - Gunakan $casts untuk type casting (datetime, enum, boolean)
+    - Definisikan relasi secara eksplisit (hasMany, belongsTo, dll)
+    - Gunakan local scopes untuk filter yang sering dipakai
+    - Hindari raw query; gunakan Eloquent query builder
+
+  example_model: |
+    class Equipment extends Model
+    {
+        use HasFactory, SoftDeletes;
+
+        protected $fillable = [
+            'name', 'category', 'description',
+            'status', 'stock', 'image',
+        ];
+
+        protected $casts = [
+            'status' => EquipmentStatus::class, // Enum casting
+            'stock'  => 'integer',
+        ];
+
+        // Relations
+        public function bookings(): HasMany
+        {
+            return $this->hasMany(Booking::class);
+        }
+
+        // Scopes
+        public function scopeAvailable(Builder $query): Builder
+        {
+            return $query->where('status', 'available')->where('stock', '>', 0);
+        }
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. REST API RULES
+# ─────────────────────────────────────────────────────────────────────
+
+api:
+  prefix: /api/v1
+  auth: Laravel Sanctum (Bearer Token)
+  format: JSON (application/json)
+  versioning: URI versioning (/api/v1/...)
+
+  endpoints:
+    auth:
+      - POST   /api/v1/auth/register     → Register anggota baru
+      - POST   /api/v1/auth/login        → Login, return token
+      - POST   /api/v1/auth/logout       → Revoke token (auth:sanctum)
+
+    equipment:
+      - GET    /api/v1/equipment          → List semua peralatan
+      - GET    /api/v1/equipment/{id}     → Detail peralatan
+      - POST   /api/v1/equipment          → Tambah peralatan [admin]
+      - PUT    /api/v1/equipment/{id}     → Update peralatan [admin]
+      - DELETE /api/v1/equipment/{id}     → Hapus peralatan [admin]
+
+    bookings:
+      - GET    /api/v1/bookings           → List peminjaman (milik user)
+      - GET    /api/v1/bookings/{id}      → Detail peminjaman
+      - POST   /api/v1/bookings           → Buat peminjaman baru
+      - PUT    /api/v1/bookings/{id}      → Update status [admin]
+      - POST   /api/v1/bookings/{id}/checkin   → Check-in peralatan
+      - POST   /api/v1/bookings/{id}/checkout  → Check-out peralatan
+      - DELETE /api/v1/bookings/{id}      → Batalkan peminjaman
+
+  response_format:
+    success: |
+      {
+        "success": true,
+        "message": "Data berhasil diambil",
+        "data": { ... },
+        "meta": {               // untuk paginated response
+          "current_page": 1,
+          "per_page": 15,
+          "total": 100
+        }
+      }
+    error: |
+      {
+        "success": false,
+        "message": "Pesan error yang jelas",
+        "errors": {             // untuk validation error
+          "field": ["detail error"]
+        }
+      }
+
+  response_codes:
+    200: OK — Request berhasil
+    201: Created — Resource berhasil dibuat
+    204: No Content — Berhasil (delete)
+    400: Bad Request — Input tidak valid
+    401: Unauthorized — Token tidak ada/tidak valid
+    403: Forbidden — Tidak punya akses (role)
+    404: Not Found — Resource tidak ditemukan
+    422: Unprocessable Entity — Validasi gagal
+    500: Internal Server Error — Error server
+
+  security_rules:
+    - Semua endpoint (kecuali login/register) wajib pakai middleware auth:sanctum
+    - Admin-only endpoint wajib ada policy/middleware pengecekan role
+    - Token expired harus di-handle dengan pesan yang jelas
+    - Rate limiting: 60 request/menit per user
+    - Hindari expose data sensitif (password, token) di response
+
+  example_controller: |
+    class EquipmentController extends Controller
+    {
+        public function index(): JsonResponse
+        {
+            $equipment = Equipment::available()
+                ->paginate(15);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Data peralatan berhasil diambil',
+                'data'    => EquipmentResource::collection($equipment),
+                'meta'    => [
+                    'current_page' => $equipment->currentPage(),
+                    'per_page'     => $equipment->perPage(),
+                    'total'        => $equipment->total(),
+                ],
+            ]);
+        }
+
+        public function store(StoreEquipmentRequest $request): JsonResponse
+        {
+            $equipment = Equipment::create($request->validated());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Peralatan berhasil ditambahkan',
+                'data'    => new EquipmentResource($equipment),
+            ], 201);
+        }
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 6. AUTHENTICATION RULES (SANCTUM)
+# ─────────────────────────────────────────────────────────────────────
+
+authentication:
+  package: laravel/sanctum
+  type: Token-based (stateless untuk API)
+  token_name: SmartHub-Token
+
+  flow: |
+    1. User POST /api/v1/auth/login dengan {email, password}
+    2. Server validasi credentials
+    3. Server buat token: $user->createToken('SmartHub-Token')->plainTextToken
+    4. Token dikirim ke client dalam response
+    5. Client simpan token, kirim di header setiap request:
+       Authorization: Bearer {token}
+    6. Middleware auth:sanctum validasi token di setiap request
+
+  example_login: |
+    public function login(LoginRequest $request): JsonResponse
+    {
+        if (!Auth::attempt($request->only('email', 'password'))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Email atau password salah',
+            ], 401);
+        }
+
+        $user  = Auth::user();
+        $token = $user->createToken('SmartHub-Token')->plainTextToken;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Login berhasil',
+            'data'    => [
+                'user'  => new UserResource($user),
+                'token' => $token,
+                'token_type' => 'Bearer',
+            ],
+        ]);
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. VALIDATION RULES
+# ─────────────────────────────────────────────────────────────────────
+
+validation:
+  approach: FormRequest class (bukan inline di controller)
+  location: app/Http/Requests/
+
+  rules:
+    - Selalu gunakan FormRequest terpisah untuk store dan update
+    - Gunakan Rule::enum() untuk validasi enum value
+    - Gunakan Rule::exists() untuk validasi foreign key
+    - Pesan error dalam Bahasa Indonesia (messages() method)
+
+  example: |
+    class StoreBookingRequest extends FormRequest
+    {
+        public function authorize(): bool
+        {
+            return true; // Sudah di-handle middleware
+        }
+
+        public function rules(): array
+        {
+            return [
+                'equipment_id' => ['required', 'exists:equipment,id'],
+                'start_time'   => ['required', 'date', 'after:now'],
+                'end_time'     => ['required', 'date', 'after:start_time'],
+                'notes'        => ['nullable', 'string', 'max:500'],
+            ];
+        }
+
+        public function messages(): array
+        {
+            return [
+                'equipment_id.required' => 'Peralatan wajib dipilih',
+                'equipment_id.exists'   => 'Peralatan tidak ditemukan',
+                'start_time.after'      => 'Waktu mulai harus setelah sekarang',
+                'end_time.after'        => 'Waktu selesai harus setelah waktu mulai',
+            ];
+        }
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. GIT WORKFLOW & BRANCHING STRATEGY
+# ─────────────────────────────────────────────────────────────────────
+
+git:
+  strategy: Git Flow (simplified)
+
+  branches:
+    master:
+      description: Branch produksi — selalu stable, siap deploy
+      rule: TIDAK BOLEH commit langsung ke master
+      merge_from: develop (via Pull Request setelah review)
+
+    develop:
+      description: Branch integrasi — staging area sebelum ke master
+      rule: Base branch untuk semua feature branch
+
+    feature/*:
+      description: Branch untuk fitur baru
+      naming: feature/{nama-fitur-singkat}
+      examples:
+        - feature/email-notification
+        - feature/equipment-crud
+        - feature/booking-checkin
+        - feature/api-authentication
+      lifecycle: |
+        1. Buat dari develop: git checkout -b feature/nama-fitur develop
+        2. Kerjakan fitur
+        3. Commit dengan pesan yang jelas
+        4. Push ke remote: git push origin feature/nama-fitur
+        5. Buat Pull Request ke develop
+        6. Review → Merge → Delete branch
+
+    hotfix/*:
+      description: Fix urgent di production
+      naming: hotfix/{deskripsi-singkat}
+      merge_into: [master, develop]
+
+  commit_convention:
+    format: "<type>(<scope>): <deskripsi singkat>"
+    types:
+      feat:     Fitur baru
+      fix:      Bug fix
+      refactor: Refactoring kode
+      docs:     Perubahan dokumentasi
+      test:     Tambah/ubah test
+      chore:    Konfigurasi, dependency update
+      style:    Formatting, kode style
+      migrate:  Perubahan database migration
+    examples:
+      - "feat(equipment): tambah endpoint CRUD peralatan"
+      - "feat(auth): implementasi login dengan Sanctum"
+      - "fix(booking): perbaiki validasi waktu check-in"
+      - "migrate(bookings): tambah kolom checked_in_at"
+      - "feat(notification): tambah email notifikasi peminjaman"
+      - "refactor(controller): pindahkan logika ke service layer"
+
+  workflow_for_email_notification_feature: |
+    # Developer lain mengerjakan fitur notifikasi email
+    # TANPA mengganggu branch master/develop
+
+    git checkout develop
+    git pull origin develop
+    git checkout -b feature/email-notification
+
+    # ... kerjakan fitur ...
+
+    git add .
+    git commit -m "feat(notification): tambah email notifikasi status peminjaman"
+    git push origin feature/email-notification
+
+    # Buat Pull Request: feature/email-notification → develop
+    # Setelah di-review dan approve → merge → delete branch
+
+  gitignore_essentials: |
+    /vendor
+    /node_modules
+    .env
+    .env.backup
+    .phpunit.result.cache
+    /storage/logs/*.log
+    *.sqlite
+    .DS_Store
+    Thumbs.db
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 9. CODING STANDARDS
+# ─────────────────────────────────────────────────────────────────────
+
+coding_standards:
+  language: PHP 8.3+
+  style_guide: PSR-12
+  formatter: Laravel Pint (sudah terinstall di Laravel 13)
+
+  php_features_to_use:
+    - Named arguments untuk clarity
+    - Constructor property promotion
+    - Match expressions (ganti switch)
+    - Nullsafe operator (?->)
+    - Readonly properties
+    - Enum (untuk status fields)
+    - Union types & intersection types
+    - Fibers (jika async diperlukan)
+
+  naming_conventions:
+    classes:        PascalCase       # EquipmentController
+    methods:        camelCase        # getAvailableEquipment()
+    variables:      camelCase        # $equipmentList
+    constants:      SCREAMING_SNAKE  # MAX_BOOKING_DURATION
+    database_cols:  snake_case       # checked_in_at
+    routes:         kebab-case       # /api/v1/check-in
+    route_names:    dot.notation     # equipment.index, bookings.store
+
+  do:
+    - Type-hint semua parameter dan return type
+    - Gunakan early return untuk mengurangi nesting
+    - Gunakan readonly untuk DTO/Value Object
+    - Extract magic number ke named constant
+    - Gunakan Collection methods daripada manual loop
+    - Selalu handle exception dengan try-catch yang tepat
+
+  dont:
+    - Jangan gunakan raw SQL kecuali terpaksa
+    - Jangan taruh logika bisnis di Controller
+    - Jangan gunakan var_dump/die untuk debugging production
+    - Jangan commit file .env ke Git
+    - Jangan hardcode credential/config value
+    - Jangan gunakan * dalam select jika tidak perlu semua kolom
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 10. SECURITY RULES
+# ─────────────────────────────────────────────────────────────────────
+
+security:
+  authentication:
+    - Gunakan Laravel Sanctum untuk token-based auth
+    - Hash password dengan bcrypt (default Laravel)
+    - Token harus di-revoke saat logout
+
+  authorization:
+    - Gunakan Laravel Policy untuk otorisasi resource
+    - Cek role (admin/member) di middleware atau policy
+    - Jangan expose endpoint admin ke member
+
+  input_validation:
+    - Validasi semua input dengan FormRequest
+    - Sanitasi input sebelum disimpan ke database
+    - Hindari mass assignment tanpa $fillable
+
+  api_security:
+    - Rate limiting via throttle middleware
+    - CORS hanya untuk origin yang diizinkan
+    - Jangan expose stack trace di production
+    - Gunakan HTTPS di production
+
+  data_protection:
+    - Jangan return kolom password dalam response
+    - Gunakan API Resource untuk filter data yang dikirim
+    - Log aktivitas sensitif (login, delete, approval)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 11. AI ASSISTANT BEHAVIOR (CURSOR-SPECIFIC)
+# ─────────────────────────────────────────────────────────────────────
+
+ai_behavior:
+  language: >
+    Gunakan Bahasa Indonesia untuk penjelasan dan komentar kode.
+    Nama variable, method, dan class tetap dalam Bahasa Inggris
+    sesuai konvensi programming.
+
+  code_generation:
+    - Selalu ikuti struktur folder yang sudah didefinisikan
+    - Generate kode yang production-ready, bukan prototype
+    - Sertakan type hints dan return types di setiap method
+    - Tambahkan PHPDoc untuk method yang kompleks
+    - Gunakan Eloquent, bukan raw query
+    - Ikuti response format JSON yang sudah didefinisikan
+    - Selalu implementasikan error handling yang proper
+
+  when_creating_controller: |
+    1. Extend Controller base class
+    2. Import semua dependency yang dibutuhkan
+    3. Inject dependency via constructor jika ada Service
+    4. Gunakan FormRequest untuk validasi
+    5. Gunakan API Resource untuk response
+    6. Return JsonResponse dengan format yang konsisten
+    7. Handle exception dengan try-catch
+
+  when_creating_migration: |
+    1. Gunakan nama yang deskriptif: create_bookings_table
+    2. Definisikan semua kolom dengan tipe yang tepat
+    3. Tambahkan foreign key constraints
+    4. Tambahkan index pada kolom yang sering di-query
+    5. Selalu ada timestamps() dan softDeletes() jika relevan
+    6. Tulis down() method yang benar (dropIfExists)
+
+  when_creating_model: |
+    1. Definisikan $fillable
+    2. Definisikan $casts
+    3. Tambahkan semua relasi
+    4. Tambahkan scopes yang berguna
+    5. Tambahkan accessor/mutator jika perlu
+    6. Gunakan trait: HasFactory, SoftDeletes jika relevan
+
+  context_awareness:
+    - Ini adalah proyek UTS — kode harus bersih dan demonstratif
+    - Dosen menilai: struktur MVC, CRUD, API, Git workflow
+    - Prioritaskan keterbacaan kode daripada over-optimization
+    - Berikan komentar pada bagian yang kompleks
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 12. QUICK REFERENCE COMMANDS
+# ─────────────────────────────────────────────────────────────────────
+
+commands:
+  setup: |
+    composer install
+    cp .env.example .env
+    php artisan key:generate
+    php artisan migrate --seed
+    php artisan serve
+
+  development: |
+    php artisan make:model Equipment -mfsc    # Model + Migration + Factory + Seeder + Controller
+    php artisan make:controller Api/EquipmentController --api
+    php artisan make:request StoreEquipmentRequest
+    php artisan make:resource EquipmentResource
+    php artisan make:policy EquipmentPolicy --model=Equipment
+    php artisan sanctum:install
+
+  database: |
+    php artisan migrate
+    php artisan migrate:fresh --seed    # Reset + seed ulang
+    php artisan db:seed
+
+  git: |
+    git checkout -b feature/nama-fitur develop
+    git add .
+    git commit -m "feat(scope): deskripsi"
+    git push origin feature/nama-fitur
+
+  testing: |
+    php artisan test
+    php artisan test --filter=EquipmentTest
+
+# ══════════════════════════════════════════════════════════════════════
+# Built with precision for Smart-Hub Management System
+# Stack: Laravel 13 · MySQL · Sanctum · Git Flow
+# ══════════════════════════════════════════════════════════════════════
