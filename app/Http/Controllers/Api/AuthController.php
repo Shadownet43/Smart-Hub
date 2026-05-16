@@ -8,6 +8,7 @@ use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +33,7 @@ class AuthController extends Controller
         $plainToken = $user->createToken(self::TOKEN_NAME)->plainTextToken;
 
         return $this->authJsonResponse(
+            request: $request,
             user: $user->fresh(),
             token: $plainToken,
             message: 'Registrasi berhasil. Selamat datang di Smart-Hub.',
@@ -63,6 +65,7 @@ class AuthController extends Controller
         $plainToken = $user->createToken(self::TOKEN_NAME)->plainTextToken;
 
         return $this->authJsonResponse(
+            request: $request,
             user: $user,
             token: $plainToken,
             message: 'Login berhasil.',
@@ -117,6 +120,7 @@ class AuthController extends Controller
      * Respons autentikasi dengan struktur JSON konsisten.
      */
     private function authJsonResponse(
+        Request $request,
         User $user,
         string $token,
         string $message,
@@ -127,7 +131,7 @@ class AuthController extends Controller
             'success' => $success,
             'message' => $message,
             'data' => [
-                'user' => $this->userPayload($user),
+                'user' => UserResource::make($user)->resolve($request),
                 'token' => $token,
                 'token_type' => 'Bearer',
             ],
@@ -139,16 +143,7 @@ class AuthController extends Controller
      */
     private function userPayload(User $user, bool $includeBookings = false): array
     {
-        $payload = [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'role' => $user->role->value,
-            'phone' => $user->phone,
-            'email_verified_at' => $user->email_verified_at?->toIso8601String(),
-            'created_at' => $user->created_at?->toIso8601String(),
-            'updated_at' => $user->updated_at?->toIso8601String(),
-        ];
+        $payload = UserResource::make($user)->resolve(request());
 
         if ($includeBookings && $user->relationLoaded('bookings')) {
             $payload['bookings'] = $user->bookings->map(static function ($booking): array {
