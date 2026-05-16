@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\BookingStatus;
 use App\Enums\EquipmentStatus;
 use Database\Factories\EquipmentFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -48,6 +50,28 @@ class Equipment extends Model
             'status' => EquipmentStatus::class,
             'stock' => 'integer',
         ];
+    }
+
+    /**
+     * @return HasMany<Booking, $this>
+     */
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class);
+    }
+
+    /**
+     * Peminjaman yang masih berlangsung: menunggu atau disetujui.
+     *
+     * @return HasMany<Booking, $this>
+     */
+    public function activeBookings(): HasMany
+    {
+        return $this->hasMany(Booking::class)
+            ->whereIn('status', [
+                BookingStatus::Pending->value,
+                BookingStatus::Approved->value,
+            ]);
     }
 
     /**

@@ -98,11 +98,18 @@ class AuthController extends Controller
         $user = $request->user();
         \assert($user instanceof User);
 
+        $user->load([
+            'bookings' => static function ($query): void {
+                $query->latest('start_time')->limit(10);
+            },
+            'bookings.equipment:id,name,category,status',
+        ]);
+
         return response()->json([
             'success' => true,
             'message' => 'Data pengguna berhasil diambil.',
             'data' => [
-                'user' => UserResource::make($user)->resolve($request),
+                'user' => $this->userPayload($user, includeBookings: true),
                 'token' => null,
                 'token_type' => 'Bearer',
             ],
@@ -129,5 +136,35 @@ class AuthController extends Controller
                 'token_type' => 'Bearer',
             ],
         ], $status);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function userPayload(User $user, bool $includeBookings = false): array
+    {
+        $payload = UserResource::make($user)->resolve(request());
+
+        if ($includeBookings && $user->relationLoaded('bookings')) {
+            $payload['bookings'] = $user->bookings->map(static function ($booking): array {
+                return [
+                    'id' => $booking->id,
+                    'equipment_id' => $booking->equipment_id,
+                    'status' => $booking->status->value,
+                    'start_time' => $booking->start_time?->toIso8601String(),
+                    'end_time' => $booking->end_time?->toIso8601String(),
+                    'equipment' => $booking->relationLoaded('equipment') && $booking->equipment !== null
+                        ? [
+                            'id' => $booking->equipment->id,
+                            'name' => $booking->equipment->name,
+                            'category' => $booking->equipment->category,
+                            'status' => $booking->equipment->status->value,
+                        ]
+                        : null,
+                ];
+            })->values()->all();
+        }
+
+        return $payload;
     }
 }
