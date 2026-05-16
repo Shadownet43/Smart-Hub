@@ -23,7 +23,7 @@ class EquipmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = Equipment::query();
+            $query = Equipment::query()->withCount('bookings');
 
             if ($request->filled('search')) {
                 $query->search((string) $request->query('search'));
@@ -99,6 +99,8 @@ class EquipmentController extends Controller
     public function show(Request $request, Equipment $equipment): JsonResponse
     {
         try {
+            $equipment->load('activeBookings');
+
             return $this->successResponse(
                 (new EquipmentResource($equipment))->resolve($request),
                 'Detail peralatan berhasil diambil.',
@@ -149,6 +151,17 @@ class EquipmentController extends Controller
     public function destroy(Request $request, Equipment $equipment): JsonResponse
     {
         try {
+            if (! $request->user()?->isAdmin()) {
+                return $this->failureResponse('Hanya administrator yang dapat menghapus peralatan.', 403);
+            }
+
+            if ($equipment->activeBookings()->exists()) {
+                return $this->failureResponse(
+                    'Tidak dapat menghapus peralatan yang masih memiliki peminjaman aktif (menunggu atau disetujui).',
+                    422,
+                );
+            }
+
             $this->deleteStoredImageIfExists($equipment);
 
             $equipment->delete();

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\EquipmentController;
 use Illuminate\Support\Facades\Route;
 
@@ -39,6 +40,24 @@ Route::prefix('v1')->group(function (): void {
                 Route::patch('/{equipment}', [EquipmentController::class, 'update']);
                 Route::delete('/{equipment}', [EquipmentController::class, 'destroy']);
             });
+        });
+
+        // Booking Routes
+        Route::prefix('bookings')->group(function (): void {
+            Route::get('/', [BookingController::class, 'index']);
+            Route::post('/', [BookingController::class, 'store']);
+            Route::get('/{booking}', [BookingController::class, 'show']);
+
+            // Admin only: update status
+            Route::put('/{booking}', [BookingController::class, 'update'])
+                ->middleware('admin-only');
+
+            // Member actions: check-in dan check-out
+            Route::post('/{booking}/checkin', [BookingController::class, 'checkIn']);
+            Route::post('/{booking}/checkout', [BookingController::class, 'checkOut']);
+
+            // Cancel booking
+            Route::delete('/{booking}', [BookingController::class, 'destroy']);
         });
     });
 });
